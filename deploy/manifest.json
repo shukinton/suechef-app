@@ -1,0 +1,13 @@
+{
+  "name": "Sue Chef",
+  "short_name": "Sue Chef",
+  "description": "Your calm kitchen coach — voice-guided, hands-free cooking",
+  "display": "standalone",
+  "background_color": "#F6EEDF",
+  "theme_color": "#B94A24",
+  "start_url": ".",
+  "icons": [
+    { "src": "icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

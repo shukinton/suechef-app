@@ -1,0 +1,19 @@
+{
+  "name": "suechef-recipe-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sue Chef recipe fetch server — TikTok oEmbed + headless-browser import ladder (FR-1.x)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node test/run.js"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "express": "^4.19.0",
+    "puppeteer-core": "^23.0.0"
+  },
+  "optionalDependencies": {
+    "@sparticuz/chromium": "^123.0.0"
+  }
+}

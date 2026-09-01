@@ -1,0 +1,13 @@
+{
+  "appId": "com.suechef.app",
+  "appName": "Sue Chef",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "always",
+    "backgroundColor": "#F6EEDF"
+  },
+  "plugins": {
+    "SpeechRecognition": {},
+    "TextToSpeech": {}
+  }
+}

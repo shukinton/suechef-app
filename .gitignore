@@ -1,0 +1,5 @@
+node_modules/
+capacitor/www/
+capacitor/ios/
+tests/shots/
+*.zip
