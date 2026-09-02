@@ -164,6 +164,21 @@ function resolveChrome() {
   const cands = [process.env.CHROME_PATH, "/usr/bin/google-chrome-stable",
     "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"].filter(Boolean);
   for (const c of cands) { try { if (fs.existsSync(c)) return c; } catch {} }
+  // puppeteer docker images v20+ install Chrome via `puppeteer browsers install`
+  // into the cache dir, NOT /usr/bin — the Sep-2 field outage ("Something went
+  // wrong" on every browser import) was exactly this probe list missing it.
+  const roots = [process.env.PUPPETEER_CACHE_DIR, "/home/pptruser/.cache/puppeteer"].filter(Boolean);
+  for (const root of roots) {
+    try {
+      const chromeDir = require("path").join(root, "chrome");
+      for (const ver of fs.readdirSync(chromeDir).sort().reverse()) {
+        for (const sub of ["chrome-linux64/chrome", "chrome-linux/chrome"]) {
+          const p = require("path").join(chromeDir, ver, sub);
+          if (fs.existsSync(p)) return p;
+        }
+      }
+    } catch {}
+  }
   return null;
 }
 let browserPromise = null;
