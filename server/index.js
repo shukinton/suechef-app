@@ -355,6 +355,14 @@ app.get("/recipe", async (req, res) => {
     const code = KNOWN.includes(e && e.code) ? e.code : "error";
     const status = code === "badurl" ? 400 : code === "timeout" ? 504 : 502;
     const message = code === "error" ? "Something went wrong reading that link." : e.message;
+    // unexpected failures MUST be visible in the host's logs (Sep 2: a field
+    // "something went wrong" was undiagnosable — nothing was logged). The URL's
+    // host is enough context; never log user-identifying query noise.
+    if (code === "error") {
+      let host = "?"; try { host = new URL(url).hostname; } catch (_) {}
+      console.error("[recipe error]", host, e && e.stack ? e.stack.split("\n").slice(0, 4).join(" | ") : String(e),
+        "| rss=" + Math.round(process.memoryUsage().rss / 1048576) + "MB");
+    }
     return fail(res, status, code, message);
   }
 });
