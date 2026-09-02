@@ -216,9 +216,24 @@ input,textarea{font-family:inherit;color:inherit}
 .cook-topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
 .cook-exit{color:var(--ink-soft);font-size:14px;font-weight:600;padding:8px 10px;min-height:44px;display:flex;align-items:center}
 .cook-progress{font-family:var(--font-mono);font-size:13px;color:var(--ink-soft);font-variant-numeric:tabular-nums}
-.phase-tag{margin-bottom:10px}
+.phase-tag{margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
 .phase-tag .eyebrow.prep{color:var(--sage-deep)}
 .phase-tag .eyebrow.cook{color:var(--terracotta-deep)}
+.prep-open{
+  background:none;border:1px solid var(--line);border-radius:999px;color:var(--sage-deep);
+  font:inherit;font-size:13px;font-weight:600;padding:8px 14px;min-height:44px;cursor:pointer;
+}
+.prep-open:active{background:var(--card)}
+.prep-sheet{padding-bottom:12px}
+.prep-sheet-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.voice-tip{
+  background:var(--card);border:1px solid var(--line);border-radius:12px;
+  padding:10px 14px;font-size:13.5px;line-height:1.5;color:var(--ink-soft);margin:12px 0 0;
+}
+.tip-dismiss{
+  background:none;border:none;color:var(--terracotta-deep);font:inherit;font-size:13.5px;
+  font-weight:600;padding:6px 8px;min-height:44px;cursor:pointer;
+}
 .step-text{
   font-family:var(--font-display);font-weight:500;font-size:27px;line-height:1.38;
   text-wrap:balance;margin:6px 0 18px;min-height:3.5em;

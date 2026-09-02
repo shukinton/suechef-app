@@ -12,7 +12,7 @@
       </p>
 
       <textarea id="paste-input" class="paste-box" rows="6"
-        placeholder="Paste your recipe text — or an Instagram / TikTok / website link.&#10;&#10;(Links need the recipe server: Settings → Developer options. Pasted text always works.)"
+        placeholder="Paste your recipe text — or an Instagram / TikTok / website link.&#10;&#10;(First link after a quiet spell can take up to a minute — the kitchen wakes up.)"
         aria-label="Paste a recipe link or text"></textarea>
 
       <div class="row spread">
@@ -103,12 +103,20 @@
     <p class="mic-note" id="ck-mic-note" hidden>Voice commands aren't available here — Sue still reads aloud, and the buttons do everything. The installed app will fix this.</p>
     <div id="ck-overview" hidden>
       <div class="phase-tag"><span class="eyebrow prep">The plan</span></div>
-      <p class="overview-lead">Prep everything first, then cook — nothing waits on something that could have started earlier.</p>
+      <p class="overview-lead">Sue reads the cooking steps aloud. The prep list below is yours to glance at — one tap away while you cook.</p>
       <div id="ck-plan-list" class="plan-list"></div>
+      <p class="voice-tip" id="ck-voice-tip" hidden>Sue's voice sounding robotic? Pick a nicer one in Settings → Sue's voice — iPhones hide lovely Enhanced voices there. <button type="button" class="tip-dismiss" id="ck-voice-tip-x">Got it</button></p>
       <button type="button" class="btn btn-primary btn-wide" id="ck-ready" style="margin-top:16px">Ready to start</button>
     </div>
+    <div id="ck-prep" class="prep-sheet" hidden>
+      <div class="prep-sheet-head">
+        <span class="eyebrow prep">Mise en place</span>
+        <button type="button" class="btn btn-ghost" id="ck-prep-close">Close</button>
+      </div>
+      <div id="ck-prep-items" class="plan-list"></div>
+    </div>
     <div id="ck-body">
-      <div class="phase-tag"><span class="eyebrow" id="ck-phase">Step</span></div>
+      <div class="phase-tag"><span class="eyebrow" id="ck-phase">Step</span><button type="button" class="prep-open" id="ck-prep-btn" hidden aria-label="Show the prep list">Prep list</button></div>
       <p class="step-text" id="ck-text"></p>
       <div class="timer-card" id="ck-timer" hidden>
         <div class="timer-label" id="ck-timer-label">Timer</div>

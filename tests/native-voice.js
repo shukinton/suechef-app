@@ -94,13 +94,16 @@ const path = require('path');
   t('native echo dropped', r.heard.length === 0, JSON.stringify(r.heard));
 
   // deep link: suechef://import?url=… lands in the paste box and starts import
+  // (a server is configured by default since Sep 2, so the import ladder STARTS —
+  // the loading overlay is the signal; the fetch itself can't leave the sandbox)
   r = await page.evaluate(() => {
     window.__mock.urlOpenCb({ url: 'suechef://import?url=' + encodeURIComponent('https://example.com/recipe') });
     return { pasted: document.getElementById('paste-input').value,
-      toast: document.getElementById('toast').textContent };
+      loading: !document.getElementById('loading').hidden ||
+               getComputedStyle(document.getElementById('loading')).display !== 'none' };
   });
   t('deeplink pastes url', r.pasted === 'https://example.com/recipe', JSON.stringify(r));
-  t('deeplink flows to onCook', /server/i.test(r.toast), r.toast); // no server configured -> honest toast
+  t('deeplink flows to onCook', r.loading, JSON.stringify(r)); // import ladder engaged
   t('deeplink rejects junk', await page.evaluate(() => {
     document.getElementById('paste-input').value = '';
     window.__mock.urlOpenCb({ url: 'suechef://import?url=javascript:alert(1)' });

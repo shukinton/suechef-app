@@ -19,7 +19,11 @@ const srv = spawn(process.execPath, [path.join(__dirname, '../server/index.js')]
   await page.goto('file://' + path.resolve(__dirname, '../app/suechef.html'));
   await page.click('#nav button[data-nav="settings"]');
   await page.click('#st-dev-toggle');
+  // 0) Shuki's Render server is pre-filled by default (Sep 2)
+  t('default prefilled', await page.$eval('#st-server', el => el.value) === 'https://suechef-app.onrender.com',
+    await page.$eval('#st-server', el => el.value));
   // 1) empty field
+  await page.fill('#st-server', '');
   await page.click('#st-server-test');
   t('empty msg', /enter an address/i.test(await page.textContent('#st-server-status')));
   // 2) good server

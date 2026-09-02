@@ -982,7 +982,7 @@ SC.voice = (() => {
   function unmute() { muted = false; if (wantListen) { resumeRec(); setState("listening"); } else start(); }
   function stopAll() { wantListen = false; muted = false; pauseRec(); stopSpeak(); setState("off"); }
   return { init, start, mute, unmute, stopAll, speak, stopSpeak, supported, ttsAvailable,
-    listVoices, pickVoice, setPreferredVoice,
+    listVoices, pickVoice, setPreferredVoice, isNativeTTS: () => !!natTTS,
     isMuted: () => muted, getState: () => state };
 })();
 
@@ -1069,12 +1069,18 @@ Instructions
 SC.ui = (() => {
   const $ = id => document.getElementById(id);
 
+  const DEFAULT_SERVER = "https://suechef-app.onrender.com"; // Shuki's Render deploy, Sep 2
   let settings = SC.store.get("settings", {
     units: "metric", allergies: [], pantry: [],
-    ttsRate: 1, aiKey: "", server: ""
+    ttsRate: 1, aiKey: "", server: DEFAULT_SERVER
   });
   const hadStaleTools = "tools" in settings;
   delete settings.tools; // ownership tracking removed (owner decision, Aug 26)
+  // one-time: pre-fill the kitchen server for installs from before the deploy —
+  // only when the field is empty; a value the user typed (or cleared later) wins
+  const needServerDefault = !settings.serverDefaulted && !settings.server;
+  if (needServerDefault) settings.server = DEFAULT_SERVER;
+  settings.serverDefaulted = true;
   let shopping = SC.store.get("shopping", []);
   // migrate pre-provenance items: amounts now tracked per source recipe
   shopping.forEach(it => { if (!it.sources) it.sources = { legacy: it.amount == null ? null : it.amount }; });
@@ -1092,7 +1098,7 @@ SC.ui = (() => {
   const saveSettings = () => SC.store.set("settings", settings);
   const saveShopping = () => { SC.store.set("shopping", shopping); renderShopBadge(); };
   const saveCookbook = () => SC.store.set("cookbook", cookbook);
-  if (hadStaleTools) saveSettings(); // persist the migration, don't re-delete every load
+  if (hadStaleTools || needServerDefault) saveSettings(); // persist migrations once
 
   /* ---- toast ---- */
   let toastT = null;
@@ -1751,22 +1757,28 @@ SC.ui = (() => {
   function startCooking() {
     if (!current || !current.steps.length) { toast("No steps found in this recipe."); return; }
     killTimer();
-    cook.items = SC.planner.buildPlan(current, factor(), settings.units);
+    // the full plan feeds the overview + the on-demand prep sheet; the WALK is
+    // recipe steps only — mise is optional viewing, never read aloud (tester, Sep 1)
+    cook.plan = SC.planner.buildPlan(current, factor(), settings.units);
+    cook.items = cook.plan.filter(it => it.kind !== "mise");
     cook.i = 0; cook.mode = "overview"; cook.checkins = 0; cook.lastActivity = Date.now();
     $("ck-done").hidden = true;
     show("cooking");
     renderOverview();
     initVoiceOnce();
     if (!cook.pacing) cook.pacing = setInterval(paceTick, 5000);
-    voiceSay("Here's the plan — prep first, then we cook. Say ready, or tap the button, when you want to start.");
+    voiceSay("Here's the plan. Say ready, or tap the button, and we'll start cooking.");
   }
   function renderOverview() {
     cook.mode = "overview";
     $("ck-body").hidden = true; $("ck-nav").hidden = true; $("ck-overview").hidden = false;
+    // one-time voice-quality tip (tester, Sep 1: "the voice is very robotic") —
+    // the picker has existed since night 4; people just never found it
+    $("ck-voice-tip").hidden = !!settings.voiceTipSeen || SC.voice.isNativeTTS() || !SC.voice.ttsAvailable();
     $("ck-progress").textContent = current.name;
     const box = $("ck-plan-list"); box.innerHTML = "";
     let lastGroup = null;
-    cook.items.forEach(it => {
+    cook.plan.forEach(it => {
       const group = it.passive ? "Start now — it takes the longest"
                   : it.kind === "mise" ? "Mise en place" : "Cooking";
       if (group !== lastGroup) {
@@ -1783,7 +1795,25 @@ SC.ui = (() => {
     cook.mode = "walk"; cook.i = 0;
     cook.lastActivity = Date.now(); cook.checkins = 0;
     $("ck-overview").hidden = true; $("ck-body").hidden = false; $("ck-nav").hidden = false;
+    const mise = cook.plan.filter(x => x.kind === "mise");
+    $("ck-prep-btn").hidden = !mise.length;
     renderStep(); speakCurrent();
+  }
+  // On-demand prep sheet — the mise list, for eyes only (never read aloud)
+  function togglePrepSheet(open) {
+    const sheet = $("ck-prep");
+    if (open) {
+      const box = $("ck-prep-items"); box.innerHTML = "";
+      cook.plan.filter(x => x.kind === "mise").forEach(it => {
+        const row = document.createElement("div"); row.className = "plan-row";
+        row.textContent = it.text;
+        box.appendChild(row);
+      });
+      sheet.hidden = false; $("ck-body").hidden = true; $("ck-nav").hidden = true;
+    } else {
+      sheet.hidden = true;
+      if (cook.mode === "walk") { $("ck-body").hidden = false; $("ck-nav").hidden = false; }
+    }
   }
   function fmt(sec) {
     const m = Math.floor(sec / 60), s = sec % 60;
@@ -1857,11 +1887,7 @@ SC.ui = (() => {
   function speakCurrent() {
     const it = currentItem();
     if (!it) return;
-    // the "say next" reminder only on the FIRST prep item — repeating a sentence
-    // that contains a command word on every item invites echo trouble, and the
-    // user knows the ritual after once
-    const suffix = it.kind === "mise" && cook.i === 0 ? " — say next when it's done." : "";
-    voiceSay(itemText(it) + suffix);
+    voiceSay(itemText(it));
   }
   function initVoiceOnce() {
     if (cook.voiceInit) { if (SC.voice.getState() !== "denied") SC.voice.start(); return; }
@@ -1928,8 +1954,16 @@ SC.ui = (() => {
     // ("how much is left", "how much longer", "are we out of time")
     const timerish = /timer/.test(t) || (cook.deadline != null && /\b(time|left|longer)\b/.test(t));
     if (timerish && /\b(done|left|status|long|longer|much|time|finished|over)\b/.test(t)) { answerTimerStatus(); return; }
-    const hm = t.match(/how (?:much|many)\s+(.+?)(?:\?|$)/);
-    if (hm) { answerHowMuch(hm[1]); return; }
+    // "how much X" / "what's the amount of X" — and "how much time" when no
+    // ingredient matches must answer about the TIMER, never "I don't see that
+    // in the ingredients" (tester, Sep 1: answers felt inconsistent)
+    const hm = t.match(/how (?:much|many)\s+(.+?)(?:\?|$)/)
+            || t.match(/(?:amount|quantity) of\s+(.+?)(?:\?|$)/);
+    if (hm) {
+      if (findIngredientInPhrase(hm[1]) < 0 && /\b(time|minutes?|longer|left)\b/.test(hm[1])) answerTimerStatus();
+      else answerHowMuch(hm[1]);
+      return;
+    }
     const dh = t.match(/(?:don'?t have|do not have|out of|ran out of)\s+(?:any\s+)?(.+?)(?:\s+left)?(?:\?|$)/);
     if (dh) {
       // a precise staple pattern ("baking powder") beats fuzzy recipe matching —
@@ -1953,8 +1987,12 @@ SC.ui = (() => {
   }
   // Natural phrasing survives: "…how much salt we need in that step" must find "salt".
   // Scan the phrase word-by-word against ingredient names, best match wins.
+  // Recognition mishears: common kitchen homophones mapped back before matching
+  const HOMOPHONE = { flower: "flour", flowers: "flour", cellery: "celery",
+    stake: "steak", carats: "carrots", currents: "currants", bazil: "basil" };
   function findIngredientInPhrase(phrase) {
     const words = phrase.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/)
+      .map(w => HOMOPHONE[w] || w)
       .filter(w => w.length > 2 && !QSTOP.has(w) && !["for","the","that","step","need","some"].includes(w));
     let best = -1, bestScore = 0;
     current.ingredients.forEach((x, i) => {
@@ -2165,6 +2203,7 @@ SC.ui = (() => {
     if (cook.i >= cook.items.length - 1) {
       killTimer();
       cook.mode = "done";
+      togglePrepSheet(false); $("ck-prep-btn").hidden = true;
       $("ck-body").hidden = true; $("ck-nav").hidden = true; $("ck-done").hidden = false;
       renderDoneSave(); // Shuki (Aug 30): save straight from the finish screen
       voiceSay("Beautifully done. Enjoy it.");
@@ -2190,6 +2229,7 @@ SC.ui = (() => {
   function stopCookingSession() { // shared teardown — voice must never leak past cooking
     killTimer();
     cook.mode = "off";
+    $("ck-prep").hidden = true; $("ck-prep-btn").hidden = true;
     if (cook.pacing) { clearInterval(cook.pacing); cook.pacing = null; }
     SC.voice.stopAll(); renderMicState("off");
   }
@@ -2356,6 +2396,11 @@ SC.ui = (() => {
     $("ck-timer-stop").addEventListener("click", dismissAlarm);
     $("ck-pill").addEventListener("click", () => { if (cook.timerStep != null) { cook.i = cook.timerStep; renderStep(); } });
     $("ck-ready").addEventListener("click", beginWalk);
+    $("ck-prep-btn").addEventListener("click", () => togglePrepSheet(true));
+    $("ck-prep-close").addEventListener("click", () => togglePrepSheet(false));
+    $("ck-voice-tip-x").addEventListener("click", () => {
+      settings.voiceTipSeen = true; saveSettings(); $("ck-voice-tip").hidden = true;
+    });
     $("ck-note-btn").addEventListener("click", () => {
       const it = currentItem();
       $("ck-note-input").value = (it && current.notes && current.notes[it.stepIndex]) || "";
