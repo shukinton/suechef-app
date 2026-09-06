@@ -71,6 +71,22 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     sr2.recipe.steps.length === 1 && sr2.recipe.steps[0] === "Mix");
   t("structured sans recipe", guard.sanitizeResult({ kind: "structured" }).kind === null);
 
+  /* ---- light rung (no-browser fetch) unit tests ---- */
+  t("entities", guard.decodeEntities("a &amp; b &quot;c&quot; &#39;d&#39; &#x1F525;") === 'a & b "c" \'d\' \u{1F525}');
+  const H1 = '<head><meta property="og:description" content="Hello &amp; welcome"><meta content="Rev" name="og:title"></head>';
+  t("meta prop-first", guard.metaFromHtml(H1, "og:description") === "Hello & welcome");
+  t("meta content-first", guard.metaFromHtml(H1, "og:title") === "Rev");
+  t("meta absent", guard.metaFromHtml(H1, "og:image") === null);
+  const LD = '<script type="application/ld+json">{"@context":"x","@graph":[{"@type":"WebSite"},' +
+    '{"@type":"Recipe","name":"Quick Soup","author":{"name":"Dana"},"recipeYield":["4 servings"],' +
+    '"recipeIngredient":["2 cups stock","1 carrot"],"recipeInstructions":[{"text":"Boil."},"Serve."]}]}</scr' + 'ipt>';
+  const ld = guard.jsonLdRecipeFromHtml("<html>" + LD + "</html>", "soup.example");
+  t("ld found", !!ld && ld.kind === "structured" && ld.source === "soup.example");
+  t("ld fields", ld && ld.recipe.name === "Quick Soup" && ld.recipe.author === "Dana" &&
+    ld.recipe.servings === 4 && ld.recipe.ingredients.length === 2 && ld.recipe.steps.join("|") === "Boil.|Serve.");
+  t("ld none", guard.jsonLdRecipeFromHtml('<script type="application/ld+json">{"@type":"Article"}</scr' + 'ipt>', "x") === null);
+  t("ld bad json survives", guard.jsonLdRecipeFromHtml('<script type="application/ld+json">{oops</scr' + 'ipt>' + LD, "x") !== null);
+
   /* ---- route tests against the spawned server + fixture host ---- */
   for (let i = 0; i < 40; i++) { try { await get("/health"); break; } catch { await sleep(250); } }
 

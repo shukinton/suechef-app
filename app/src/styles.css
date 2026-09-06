@@ -224,6 +224,23 @@ input,textarea{font-family:inherit;color:inherit}
   font:inherit;font-size:13px;font-weight:600;padding:8px 14px;min-height:44px;cursor:pointer;
 }
 .prep-open:active{background:var(--card)}
+.paste-wrap{position:relative}
+.paste-clear{
+  position:absolute;top:8px;right:8px;width:34px;height:34px;border-radius:50%;
+  border:1px solid var(--line);background:var(--card);color:var(--ink-soft);
+  font-size:14px;line-height:1;cursor:pointer;padding:0;
+}
+.paste-clear:active{background:var(--cream)}
+.name-row{display:flex;align-items:center;gap:8px}
+.name-edit{
+  background:none;border:none;color:var(--terracotta-deep);font-size:17px;
+  cursor:pointer;padding:8px;min-width:44px;min-height:44px;
+}
+.name-edit-row{display:flex;gap:8px;margin:4px 0 8px}
+.name-edit-row input{
+  flex:1;min-width:0;font:inherit;font-size:16px;padding:10px 12px;
+  border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);
+}
 .prep-sheet{padding-bottom:12px}
 .prep-sheet-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
 .voice-tip{

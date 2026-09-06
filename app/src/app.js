@@ -256,6 +256,33 @@ SC.units = (() => {
         }
       }
     }
+    return convertTempsInText(txt, system);
+  }
+
+  /* Oven temperatures follow the unit system (tester, Sep 4: "400 degrees" told
+     her nothing). Explicit F/C converts via the standard oven chart (400°F↔200°C,
+     not the raw 204); a bare "N degrees" is inferred only where it's safe:
+     ≥275 can only be Fahrenheit, 100-240 after "at/to" is a Celsius oven. The
+     original stays in parentheses so nothing is hidden. */
+  const F2C = { 250:120, 275:140, 300:150, 325:160, 350:175, 375:190, 400:200, 425:220, 450:230, 475:240, 500:260 };
+  const C2F = { 120:250, 140:275, 150:300, 160:325, 170:340, 175:350, 180:350, 190:375, 200:400, 210:410, 220:425, 230:450, 240:475, 250:480, 260:500 };
+  const fToC = f => F2C[f] != null ? F2C[f] : Math.round((f - 32) * 5 / 9 / 5) * 5;
+  const cToF = c => C2F[c] != null ? C2F[c] : Math.round((c * 9 / 5 + 32) / 25) * 25;
+  function tempPair(n, scale, system) { // -> display string in the active system
+    const f = scale === "F" ? n : cToF(n), c = scale === "C" ? n : fToC(n);
+    return system === "metric" ? c + "°C (" + f + "°F)" : f + "°F (" + c + "°C)";
+  }
+  function convertTempsInText(txt, system) {
+    // explicit scale: "400 degrees Fahrenheit", "400°F", "200 C"
+    txt = txt.replace(/(\d{2,3})\s*(?:°\s*|degrees?\s+)?(F(?:ahrenheit)?|C(?:elsius)?)\b\.?/gi, (m, num, sc) =>
+      tempPair(+num, sc[0].toUpperCase(), system));
+    // bare "N degrees": only where the number pins the scale down
+    txt = txt.replace(/\b(at|to)\s+(\d{2,3})\s*degrees?\b(?!\s*(?:F|C|Fahrenheit|Celsius|angle))/gi, (m, prep, num) => {
+      const n = +num;
+      if (n >= 275) return prep + " " + tempPair(n, "F", system);
+      if (n >= 100 && n <= 240) return prep + " " + tempPair(n, "C", system);
+      return m; // 240-275 is genuinely ambiguous — leave the author's words
+    });
     return txt;
   }
 
@@ -291,7 +318,7 @@ SC.units = (() => {
     return null;
   }
   return { normalizeUnit, isCountable, isNatural, displayAmount, displayName, displayStepText,
-    niceNumber, pluralize, metricBase, NATURAL_EQUIV_G, NATURAL_EQUIV_ML, JUICE_ML };
+    niceNumber, pluralize, metricBase, convertTempsInText, NATURAL_EQUIV_G, NATURAL_EQUIV_ML, JUICE_ML };
 })();
 
 /* ---------------- SC.parser ---------------- */
@@ -306,6 +333,33 @@ SC.parser = (() => {
   const CHROME_RE = /^(instacart|get recipe ingredients|shop (?:the )?ingredients|add (?:all )?to cart|buy ingredients|cook mode|prevent your screen from going dark|print(?: recipe)?|pin(?: recipe)?|save(?: recipe)?|jump to recipe|watch (?:the )?video|scale)\s*:?$/i;
   // section headers a website paste carries — never the title, never an ingredient
   const SECTION_RE = /^(ingredients?|instructions?|directions?|method|steps|preparation|equipment|tools|notes?|recipe notes|nutrition(?:al)?(?: information| facts)?|video)\s*:?$/i;
+  // social-caption hype — whole lines that are cheer, not cooking (tester, Sep 4:
+  // "you have got to try this" was read aloud as a step). Anchored to the WHOLE
+  // line so real instructions ("try not to overmix") are never touched.
+  const HYPE_RE = new RegExp("^(?:" + [
+    "you(?:'?ve| have)? got(?:ta)? to (?:try|make) (?:this|these|it)[\\s\\S]*",
+    "trust me[\\s\\S]*", "you won'?t regret[\\s\\S]*", "(?:so|sooo+) (?:good|easy|delicious)[.!\\s]*",
+    "follow (?:me|us|for more|@[\\w.]+)[\\s\\S]*", "save this (?:recipe |post |one )?(?:for later)?[\\s\\S]*",
+    "link in (?:my )?bio[\\s\\S]*", "tag (?:a friend|someone|your)[\\s\\S]*",
+    "let me know (?:in the comments?)?[\\s\\S]*", "comment [\"'\\w][\\s\\S]*", "share (?:this|it) with[\\s\\S]*",
+    "watch (?:till|until) the end[\\s\\S]*", "(?:full )?recipe (?:below|in bio|in comments?)[\\s\\S]*",
+    "enjoy[!.\\s]*", "yum+[!.\\s]*", "(?:don'?t forget to )?(?:like|subscribe)(?: and [\\s\\S]*)?[!.\\s]*",
+    "credit s?:?\\s*@?[\\w.\\s]*", "via @[\\w.]+[\\s\\S]*", "(?:this|it) (?:is|went) viral[\\s\\S]*",
+    "who (?:else )?(?:is|wants|needs)[\\s\\S]*\\?", "would you try (?:this|these)[\\s\\S]*"
+  ].join("|") + ")$", "i");
+  function isCaptionNoise(line) {
+    const bare = line.replace(BULLET_RE, "").trim();
+    if (!bare) return false;
+    if (HYPE_RE.test(bare)) return true;
+    // only hashtags/mentions/emoji left once real words are removed?
+    const words = bare.replace(/[#@][\w.֐-׾]+/g, " ")
+      .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{2B50}\u{2764}]/gu, " ").trim();
+    return words.length === 0;
+  }
+  // hashtags riding on the END of a real sentence are dropped, the sentence kept
+  function stripTrailingTags(line) {
+    return line.replace(/(?:\s*[#@][\w.֐-׾]+)+\s*$/g, "").trim();
+  }
   const UNIT_RE = /^(fl\.?\s?oz|fluid ounces?|[a-zA-Z]+\.?)\s+/;
 
   function parseAmountToken(tok) {
@@ -417,7 +471,8 @@ SC.parser = (() => {
     let name = "Untitled recipe", rawTitleLine = null;
     const firstHeader = lines.findIndex(l => SECTION_RE.test(l));
     for (const l of (firstHeader > -1 ? lines.slice(0, firstHeader) : lines)) {
-      if (l && !/^https?:\/\//i.test(l) && !SECTION_RE.test(l) && l.replace(BULLET_RE, "").trim()) {
+      if (l && !/^https?:\/\//i.test(l) && !SECTION_RE.test(l) && !isCaptionNoise(l) &&
+          l.replace(BULLET_RE, "").trim()) {
         rawTitleLine = l;
         name = l.replace(/^recipe:?\s*/i, "").replace(/\s+recipe\s*$/i, "")
           .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{2B50}\u{2764}]/gu, "") // emoji
@@ -453,6 +508,7 @@ SC.parser = (() => {
       const tail = stepLines.findIndex(l => SECTION_RE.test(l) && !/^(instructions?|directions?|method|steps|preparation)/i.test(l));
       if (tail > -1) stepLines = stepLines.slice(0, tail);
       stepLines = stepLines.filter(l => !CHROME_RE.test(l.replace(BULLET_RE, "")));
+      stepLines = stepLines.filter(l => !isCaptionNoise(l)).map(stripTrailingTags).filter(Boolean);
       // an Equipment/Tools block inside the ingredient region: skip its items
       // ("air fryer" is not an ingredient) until the list looks like food again
       let inTools = false;
@@ -466,8 +522,11 @@ SC.parser = (() => {
       // heuristic: ingredient-looking lines vs sentences (skip the raw title line)
       for (const l of lines) {
         if (!l || l === rawTitleLine || /^https?:\/\//i.test(l)) continue;
-        if (looksLikeIngredient(l)) ingLines.push(l);
-        else if (l.split(" ").length > 3 || /[.!?]$/.test(l)) stepLines.push(l);
+        if (isCaptionNoise(l)) continue; // "you've got to try this" is not a step (Sep 4)
+        const clean = stripTrailingTags(l);
+        if (!clean) continue;
+        if (looksLikeIngredient(clean)) ingLines.push(clean);
+        else if (clean.split(" ").length > 3 || /[.!?]$/.test(clean)) stepLines.push(clean);
       }
     }
     const ingredients = ingLines.map(parseIngredientLine).filter(Boolean);
@@ -514,6 +573,22 @@ SC.swaps = (() => {
     { re:/\bbreadcrumbs\b|\bpanko\b/i, alts:["gluten-free breadcrumbs","crushed rice crackers"], diets:["glutenfree"], ratio:1, note:"toast lightly for extra crunch" },
     { re:/\b(chicken|beef)\s+(broth|stock)\b/i, alts:["vegetable broth"], diets:["vegan","vegetarian"], ratio:1, note:"same amount; a splash of soy sauce deepens it" },
     { re:/\bpeanuts?\b/i, alts:["roasted sunflower seeds"], diets:["nutfree"], ratio:1, note:"same crunch, nut-free" },
+    // like-for-like swaps (no diet tag) — the row button and "replace X" requests
+    // reach these through the all-rules fallback (tester gap, Sep 3)
+    { re:/\bcinnamon\b/i, alts:["nutmeg","allspice","pumpkin pie spice"], diets:[], ratio:0.5, note:"warmer and stronger — start with half" },
+    { re:/\bnutmeg\b/i, alts:["cinnamon","allspice"], diets:[], ratio:1, note:"milder — a touch more is fine" },
+    { re:/\bparsley\b/i, alts:["cilantro","chives"], diets:[], ratio:1, note:"same freshness, different accent" },
+    { re:/\bcilantro\b|\bcoriander leaves\b/i, alts:["parsley","basil"], diets:[], ratio:1, note:"for the no-cilantro crowd" },
+    { re:/\bbasil\b/i, alts:["parsley + a pinch of dried oregano"], diets:[], ratio:1, note:"closest fresh stand-in" },
+    { re:/\bgnocchi\b/i, alts:["small pasta shells","cubed boiled potatoes"], diets:[], ratio:1, note:"same cooking role; watch the timing" },
+    { re:/\bsalmon\b/i, alts:["trout","cod"], diets:[], ratio:1, note:"trout is closest; cod is milder" },
+    { re:/\bfeta\b/i, alts:["goat cheese","ricotta salata"], diets:[], ratio:1, note:"same salty crumble" },
+    { re:/\bgarlic powder\b/i, alts:["fresh garlic"], diets:[], ratio:1, note:"one clove per quarter teaspoon" },
+    { re:/\bolive oil\b/i, alts:["avocado oil","any neutral oil"], diets:[], ratio:1, note:"same amount" },
+    { re:/\blemon juice\b|\blemons?\b/i, alts:["lime"], diets:[], ratio:1, note:"same brightness" },
+    { re:/\blimes?\b/i, alts:["lemon"], diets:[], ratio:1, note:"same brightness" },
+    { re:/\bonions?\b/i, alts:["shallots","leeks"], diets:[], ratio:1, note:"shallots are sweeter and gentler" },
+    { re:/\beverything (?:but the )?bagel seasoning\b/i, alts:["sesame + poppy seeds + dried garlic + flaky salt"], diets:[], ratio:1, note:"that's the whole blend" },
     { re:/\b(almonds?|walnuts?|pecans?|cashews?|hazelnuts?|pistachios?)\b/i, alts:["pumpkin seeds","sunflower seeds"], diets:["nutfree"], ratio:1, note:"toast them for the same crunch" },
     // keto / low-carb
     { re:/\b(all-purpose|plain)\s+flour\b|\bflour\b/i, alts:["almond flour"], diets:["keto","lowcarb","paleo"], ratio:1, note:"denser — an extra egg helps the rise" },
@@ -682,7 +757,15 @@ SC.swaps = (() => {
       const what = m[1].replace(/\b(please|thanks|thank you)\b/g, "").trim();
       if (what && what !== "salt") out.halves.push(what); // "less salt" maps to low-sodium (which halves salt)
     }
-    out.unknown = !out.diets.length && !out.removes.length && !out.halves.length;
+    // "replace the cinnamon" / "swap cinnamon" / "substitute cinnamon (with X)" —
+    // routes to the same per-ingredient proposal as the row button (tester, Sep 3)
+    out.swaps = [];
+    const swapRe = /(?:\breplace\b|\bswap\b|\bsubstitute\b)\s+(?:the\s+)?([a-z][a-z\s-]{1,30}?)(?=[,.!]|\s+(?:with|for|and)\b|\s*$)/g;
+    while ((m = swapRe.exec(t)) !== null) {
+      const what = m[1].replace(/\b(please|thanks|thank you)\b/g, "").trim();
+      if (what) out.swaps.push(what);
+    }
+    out.unknown = !out.diets.length && !out.removes.length && !out.halves.length && !out.swaps.length;
     return out;
   }
 
@@ -797,7 +880,7 @@ SC.voice = (() => {
     // otherwise be swallowed for 5s. Layers 1-2 still protect during and just
     // after speech; a lone echo tail this exact is unlikely — field-verify on
     // the phone (see PROJECT_STATE review queue).
-    if (/^(start|stop) (the )?timer( again)?$/.test(t)) return false;
+    if (/^(start|stop|cancel) (the )?timer( again)?$/.test(t)) return false;
     if (t.split(" ").length >= 3 && lastSpokenText.includes(t) && since < 5000) return true; // layer 3
     return false;
   }
@@ -1274,6 +1357,7 @@ SC.ui = (() => {
     current = recipe;
     current.swaps = current.swaps || [];
     servings = recipe.servings || 4;
+    $("rv-name-edit").hidden = true; // a rename editor left open never carries over
     // FR-4.3: allergies auto-replace while reading, transparently and undoable.
     // Tracked per-allergy so allergies added later re-check saved recipes.
     current.allergyCheckedFor = current.allergyCheckedFor || [];
@@ -1369,7 +1453,7 @@ SC.ui = (() => {
       const before = added;
       SC.swaps.proposalsForDiet(current.ingredients, d.key, settings.pantry).forEach(p => {
         if (rowBlocks(p.idx)) return;
-        current.swaps.push({ ...p, status: "proposed", auto: false, tag: d.label });
+        current.swaps.push({ ...p, status: "proposed", auto: false, tag: d.label, diet: d.key });
         added++;
       });
       // free-text diet requests light the matching chip too (rev-10)
@@ -1406,17 +1490,44 @@ SC.ui = (() => {
         added++;
       });
     });
+    // "replace X": the row-button proposal, reachable by typing (tester, Sep 3)
+    const noSwap = [];
+    (req.swaps || []).forEach(what => {
+      let hit = -1;
+      current.ingredients.forEach((ing, idx) => {
+        if (hit < 0 && !ing.removed && (SC.swaps.allergyHit(ing.name, what) ||
+            (ing.originalName && SC.swaps.allergyHit(ing.originalName, what)))) hit = idx;
+      });
+      if (hit < 0) { noSwap.push(what); return; }
+      if (rowBlocks(hit)) return;
+      const p = SC.swaps.proposalForIngredient(current.ingredients[hit], hit, settings.pantry);
+      if (p) { current.swaps.push({ ...p, status: "proposed", auto: false }); added++; }
+      else noSwap.push(current.ingredients[hit].name);
+    });
     renderSwaps();
     inp.value = "";
     toast(added ? added + " change" + (added > 1 ? "s" : "") + " proposed — approve below"
-                : "Nothing in this recipe matches that request");
+        : noSwap.length ? "Sue doesn't have a swap for " + noSwap.join(", ") + " in her book yet"
+        : "Nothing in this recipe matches that request");
   }
   function proposeDiet(dietKey) {
+    // pressing a LIT chip is a change of heart: withdraw this diet's proposals
+    // that are still awaiting approval (accepted swaps are a made decision and
+    // stay), and unlight the chip (tester, Sep 3)
+    if (current.dietsRequested && current.dietsRequested.includes(dietKey)) {
+      const before = current.swaps.length;
+      current.swaps = current.swaps.filter(s => !(s.diet === dietKey && s.status === "proposed"));
+      current.dietsRequested = current.dietsRequested.filter(k => k !== dietKey);
+      renderSwaps();
+      const n = before - current.swaps.length;
+      toast(n ? n + " pending swap" + (n > 1 ? "s" : "") + " withdrawn" : "Diet unmarked — accepted swaps stay");
+      return;
+    }
     const props = SC.swaps.proposalsForDiet(current.ingredients, dietKey, settings.pantry);
     let added = 0, suppressed = 0;
     props.forEach(p => {
       if (current.swaps.some(s => s.idx === p.idx && s.status !== "dismissed")) { suppressed++; return; }
-      current.swaps.push({ ...p, status: "proposed", auto: false });
+      current.swaps.push({ ...p, status: "proposed", auto: false, diet: dietKey });
       added++;
     });
     // remember the request so the chip shows a pressed state (rev-5 polish) —
@@ -1596,7 +1707,7 @@ SC.ui = (() => {
       toast("There's already a swap for " + ing.name + " below"); return;
     }
     const p = SC.swaps.proposalForIngredient(ing, idx, settings.pantry);
-    if (!p) { toast("Sue doesn't know a swap for " + ing.name + " yet"); return; }
+    if (!p) { toast("Sue doesn't have a swap for " + ing.name + " in her book yet — the app version will know more"); return; }
     current.swaps.push({ ...p, status: "proposed", auto: false });
     renderSwaps();
     toast("Swap proposed below — approve it there");
@@ -1799,7 +1910,15 @@ SC.ui = (() => {
     $("ck-prep-btn").hidden = !mise.length;
     renderStep(); speakCurrent();
   }
-  // On-demand prep sheet — the mise list, for eyes only (never read aloud)
+  // The prep list is read aloud only when ASKED for (tester, Sep 3): hands-free
+  // users can say "read the prep list"; it is never forced on anyone.
+  function readPrepList() {
+    const mise = (cook.plan || []).filter(x => x.kind === "mise");
+    if (!mise.length) { voiceSay("This recipe has no prep list — everything happens in the steps."); return; }
+    if (cook.mode === "walk") togglePrepSheet(true);
+    voiceSay("The prep list: " + mise.map(x => x.text).join(". ") + ".");
+  }
+  // On-demand prep sheet — the mise list, eyes-first (spoken only on request)
   function togglePrepSheet(open) {
     const sheet = $("ck-prep");
     if (open) {
@@ -1841,8 +1960,12 @@ SC.ui = (() => {
     if (tm || runningHere) {
       tc.hidden = false;
       $("ck-timer-label").textContent = (tm || Math.round(cook.timerTotal / 60)) + " minute timer";
-      $("ck-timer-time").textContent = runningHere ? fmt(timeLeft()) : fmt((tm || 0) * 60);
+      // a timer that isn't running here shows its DURATION, not a frozen
+      // countdown — "12:00" standing still read as a stuck timer (tester, Sep 3)
+      $("ck-timer-time").textContent = runningHere ? fmt(timeLeft()) : (tm || 0) + " min";
       $("ck-timer-start").hidden = runningHere;
+      $("ck-timer-start").textContent = "Start timer"; // arm-confirm may have relabeled it
+      $("ck-timer-cancel").hidden = !(runningHere && !cook.ringing);
       $("ck-timer-stop").hidden = !(runningHere && cook.ringing);
       tc.classList.toggle("ringing", runningHere && cook.ringing);
     } else tc.hidden = true;
@@ -1882,7 +2005,13 @@ SC.ui = (() => {
   function voiceSay(text, onDone) {
     if (!SC.voice.ttsAvailable()) { onDone && onDone(); return; }
     showBubble("Sue", text);
-    SC.voice.speak(text, settings.ttsRate || 1, onDone);
+    // the screen shows both scales ("200°C (400°F)"); Sue SPEAKS only the
+    // active one, and says the symbol in words
+    const spoken = text
+      .replace(/\s*\(\d{2,3}°[FC]\)/g, "")
+      .replace(/(\d)\s*°\s*C\b/g, "$1 degrees Celsius")
+      .replace(/(\d)\s*°\s*F\b/g, "$1 degrees Fahrenheit");
+    SC.voice.speak(spoken, settings.ttsRate || 1, onDone);
   }
   function speakCurrent() {
     const it = currentItem();
@@ -1975,9 +2104,11 @@ SC.ui = (() => {
     }
     const sb = t.match(/\b(?:substitute|swap|replace)\s+(?:the\s+)?(.+?)(?:\?|$)/);
     if (sb) { answerSubstitute(sb[1]); return; }
+    if (/\b(?:read\s+(?:me\s+)?(?:the\s+)?)?(?:prep list|mise en place|preparation list)\b/.test(t)) { readPrepList(); return; }
     if (/\b(repeat|again|what was that)\b/.test(t)) { speakCurrent(); return; }
     if (/\b(back|previous)\b/.test(t)) { prevStep(); return; }
     if (/\b(stop|quiet|silence|okay|ok)\b/.test(t) && cook.ringing) { dismissAlarm(); return; }
+    if (/\b(?:cancel|stop) (?:the )?timer\b/.test(t) && cook.deadline != null && !cook.ringing) { cancelTimer(); return; }
     if (/\bstart (?:the )?timer\b/.test(t)) { startTimer(); return; }
     // comprehension questions ("room temperature or cold eggs?") before any advance word
     if (/^(what|when|why|does|do|should|can|is|are|which|how)\b/.test(t) ||
@@ -2140,6 +2271,7 @@ SC.ui = (() => {
         cook.timerReplaceArm = Date.now();
         const n = cook.items.slice(0, cook.timerStep + 1).filter(x => x.kind === "step").length;
         const left = Math.max(1, Math.ceil(timeLeft() / 60));
+        $("ck-timer-start").textContent = "Tap again to replace"; // the ask must be visible too (tester, Sep 3)
         voiceSay("A timer is already running for step " + n + " with about " + left +
           (left > 1 ? " minutes" : " minute") + " left. Say start timer again, or tap it again, to replace it.",
           () => { if (cook.timerReplaceArm && cook.timerReplaceArmStep === st) cook.timerReplaceArm = Date.now(); });
@@ -2194,6 +2326,13 @@ SC.ui = (() => {
     cook.lastActivity = Date.now(); cook.checkins = 0;
     voiceSay("The " + mins + " minutes are up — ready to continue?");
     toast("Alarm off");
+  }
+  function cancelTimer() { // a running timer can be taken back (tester, Sep 3)
+    if (cook.deadline == null || cook.ringing) return;
+    killTimer(); renderStep();
+    cook.lastActivity = Date.now(); cook.checkins = 0;
+    toast("Timer canceled");
+    voiceSay("Timer canceled.");
   }
   function advance() {
     cook.lastActivity = Date.now(); cook.checkins = 0;
@@ -2382,6 +2521,27 @@ SC.ui = (() => {
       $("paste-input").value = SC.SAMPLES[1].text; toast("Shakshuka sample loaded — hit Let's Cook");
     });
     $("btn-cook").addEventListener("click", onCook);
+    // quick clear on the paste box — swapping recipes shouldn't need select-all (tester, Sep 3)
+    const pasteBox = $("paste-input"), pasteClear = $("paste-clear");
+    const syncClear = () => { pasteClear.hidden = !pasteBox.value; };
+    pasteBox.addEventListener("input", syncClear); syncClear();
+    pasteClear.addEventListener("click", () => { pasteBox.value = ""; syncClear(); pasteBox.focus(); });
+    // rename a recipe right on Review (tester, Sep 3)
+    $("rv-rename").addEventListener("click", () => {
+      $("rv-name-input").value = current ? current.name : "";
+      $("rv-name-edit").hidden = false; $("rv-name-input").focus();
+    });
+    $("rv-name-save").addEventListener("click", () => {
+      const v = $("rv-name-input").value.trim();
+      $("rv-name-edit").hidden = true;
+      if (!v || !current || v === current.name) return;
+      current.name = v;
+      $("rv-name").textContent = v;
+      const saved = cookbook.find(r => r.id === current.id);
+      if (saved) { saved.name = v; saveCookbook(); }
+      toast(saved ? "Renamed — cookbook updated" : "Renamed");
+    });
+    $("rv-name-input").addEventListener("keydown", e => { if (e.key === "Enter") $("rv-name-save").click(); });
     $("rv-serv-minus").addEventListener("click", () => { if (servings > 1) { servings--; $("rv-serv-count").textContent = servings; renderIngredients(); } });
     $("rv-serv-plus").addEventListener("click", () => { if (servings < 24) { servings++; $("rv-serv-count").textContent = servings; renderIngredients(); } });
     $("rv-start").addEventListener("click", startCooking);
@@ -2393,6 +2553,7 @@ SC.ui = (() => {
     $("ck-next").addEventListener("click", advance);    // timer keeps running across steps
     $("ck-back").addEventListener("click", prevStep);
     $("ck-timer-start").addEventListener("click", startTimer);
+    $("ck-timer-cancel").addEventListener("click", cancelTimer);
     $("ck-timer-stop").addEventListener("click", dismissAlarm);
     $("ck-pill").addEventListener("click", () => { if (cook.timerStep != null) { cook.i = cook.timerStep; renderStep(); } });
     $("ck-ready").addEventListener("click", beginWalk);

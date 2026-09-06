@@ -58,6 +58,14 @@ const path = require('path');
 
   // ask(): inject one transcript, wait for Sue's spoken reply (or silence)
   const ask = async phrase => {
+    // wait until Sue is actually quiet — a long previous answer (the prep list)
+    // must not bleed into this case's capture window
+    for (let i = 0; i < 40; i++) {
+      const n1 = await page.evaluate(() => window.__mock.spoken.length);
+      await page.waitForTimeout(300);
+      const n2 = await page.evaluate(() => window.__mock.spoken.length);
+      if (n1 === n2) break;
+    }
     await page.evaluate(() => { window.__mock.spoken = []; });
     await page.waitForTimeout(500); // clear the echo tail (layer 2 = 400ms)
     await page.evaluate(p => window.__mock.recQueue.push(p), phrase);
@@ -92,6 +100,7 @@ const path = require('path');
     ["I don't have buttermilk", /milk plus a tablespoon of lemon juice/],
     ['how much baking powder', /1 tsp of baking powder/],
     ['how much baking soda', /(½|half a) tsp of baking soda/],
+    ['read the prep list', /The prep list: .*250 g all-purpose flour/], // spoken on request only (rev-11)
   ];
   for (const [q, re] of CASES) t('Q: ' + q, re.test(await ask(q)), 'got: ' + JSON.stringify(await page.evaluate(() => window.__mock.spoken.join(' '))));
 

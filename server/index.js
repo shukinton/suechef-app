@@ -157,6 +157,129 @@ async function fetchTikTok(url) {
   } finally { clearTimeout(to); }
 }
 
+/* ---------- rung 1.5: LIGHT fetch — no browser ----------
+   Most recipe sites render their JSON-LD (and Instagram its og: meta) into the
+   raw HTML, so a plain fetch answers in ~1s where Chrome needs 30-60s on a
+   0.1-CPU instance — and one heavy Chrome page was starving every other
+   request (field outage #2, Sep 3). Chrome stays as the fallback rung for
+   JS-rendered pages. */
+const LIGHT_TIMEOUT_MS = 12000, LIGHT_MAX_BYTES = 1200000, LIGHT_MAX_HOPS = 5;
+const MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+function decodeEntities(s) {
+  return String(s)
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(+d))
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&");
+}
+function metaFromHtml(html, prop) {
+  // both attribute orders; content quoted either way
+  const re1 = new RegExp('<meta[^>]+(?:property|name)=["\']' + prop.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+    '["\'][^>]*content=["\']([^"\']*)["\']', "i");
+  const re2 = new RegExp('<meta[^>]+content=["\']([^"\']*)["\'][^>]*(?:property|name)=["\']' +
+    prop.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + '["\']', "i");
+  const m = html.match(re1) || html.match(re2);
+  return m ? decodeEntities(m[1]) : null;
+}
+function recipeNodeToOut(node, host) {
+  const insts = [].concat(node.recipeInstructions || []).map(i =>
+    typeof i === "string" ? i : (i.text || (i.itemListElement || []).map(x => x.text || "").join(" "))).filter(Boolean);
+  const ra = node.author;
+  let author = null;
+  if (typeof ra === "string") author = ra;
+  else if (ra) { const f = [].concat(ra)[0]; author = typeof f === "string" ? f : (f && f.name) || null; }
+  return { kind: "structured", source: host, title: node.name != null ? String(node.name) : null,
+    author: author != null ? String(author) : null,
+    recipe: {
+      name: node.name != null ? String(node.name) : null,
+      author: author != null ? String(author) : null,
+      servings: parseInt([].concat(node.recipeYield || [])[0]) || null,
+      prepTime: node.prepTime || null,
+      cookTime: node.cookTime || null,
+      ingredients: [].concat(node.recipeIngredient || node.ingredients || []).map(x => typeof x === "string" ? x : (x && x.name) || "").filter(Boolean),
+      steps: insts.map(String)
+    } };
+}
+function jsonLdRecipeFromHtml(html, host) {
+  const re = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    try {
+      const data = JSON.parse(decodeEntities(m[1].trim()));
+      const list = Array.isArray(data) ? data : (data["@graph"] || [data]);
+      for (const node of list) {
+        if ([].concat((node && node["@type"]) || []).includes("Recipe"))
+          return recipeNodeToOut(node, host);
+      }
+    } catch (e) { /* bad or partial JSON-LD — keep looking */ }
+  }
+  return null;
+}
+async function fetchRawHtml(u) {
+  let target = u;
+  for (let hop = 0; hop <= LIGHT_MAX_HOPS; hop++) {
+    if (!ALLOW_PRIVATE && (await hostVerdict(target.hostname)) !== "public")
+      throw { code: "badurl", message: "That address isn't reachable from here." };
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), LIGHT_TIMEOUT_MS);
+    let r;
+    try {
+      r = await fetch(target.href, { redirect: "manual", signal: ctrl.signal,
+        headers: { "user-agent": MOBILE_UA, accept: "text/html,application/xhtml+xml" } });
+    } catch (e) {
+      clearTimeout(to);
+      throw e.name === "AbortError" ? { code: "timeout", message: "The page took too long to load." } : e;
+    }
+    clearTimeout(to);
+    if ([301, 302, 303, 307, 308].includes(r.status)) {
+      const loc = r.headers.get("location");
+      if (!loc) throw { code: "notfound", message: "That page couldn't be loaded." };
+      target = new URL(loc, target); // next hop is re-validated at the top
+      continue;
+    }
+    if (!r.ok) throw { code: r.status === 404 ? "notfound" : "blocked", message: "That page couldn't be loaded." };
+    if (!/text\/html|application\/xhtml/i.test(r.headers.get("content-type") || "")) return null;
+    const reader = r.body && r.body.getReader ? r.body.getReader() : null;
+    if (!reader) return { html: (await r.text()).slice(0, LIGHT_MAX_BYTES), host: target.hostname };
+    let got = 0; const chunks = [];
+    while (got < LIGHT_MAX_BYTES) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value); got += value.length;
+    }
+    try { await reader.cancel(); } catch (e) {}
+    return { html: Buffer.concat(chunks).toString("utf8"), host: target.hostname };
+  }
+  throw { code: "notfound", message: "Too many redirects on that link." };
+}
+async function fetchLight(u) {
+  const raw = await fetchRawHtml(u);
+  if (!raw) return null;
+  const { html, host } = raw;
+  const ld = jsonLdRecipeFromHtml(html, host);
+  if (ld) return ld;
+  const desc = metaFromHtml(html, "og:description") || "";
+  const igLike = /[\d,.KM]+ likes?, [\d,.KM]+ comments? - /i.test(desc);
+  if (/(^|\.)instagram\.com$/i.test(host) || igLike) {
+    if (!desc) {
+      if (/name=["']username["']|loginForm/i.test(html))
+        return { kind: "blocked", source: host, title: null, author: null, text: null };
+      return null; // let the browser try
+    }
+    let caption = desc.replace(/^[\d,.KM]+ likes?, [\d,.KM]+ comments? - /i, "");
+    let author = null;
+    const m = caption.match(/^([\w.]+) on .*?: ["“]([\s\S]*)["”]?$/) || caption.match(/^([\w.]+): ([\s\S]*)$/);
+    if (m) { author = m[1]; caption = m[2]; }
+    // a short caption usually means the recipe hides in the FIRST COMMENT
+    // (spec 5.1) — only the browser rung can read comments, so step aside
+    if (caption.trim().length < 200) return null;
+    return { kind: "text", source: host, text: caption,
+      title: (caption.split("\n")[0] || "Instagram recipe").slice(0, 80),
+      author: author || (metaFromHtml(html, "og:title") || "").split(/[|•(]/)[0].trim() || null };
+  }
+  return null; // no server-rendered recipe — the browser rung takes over
+}
+
 /* ---------- rung 2: headless browser ---------- */
 function resolveChrome() {
   // CHROME_PATH wins when it exists; otherwise probe the usual homes
@@ -208,7 +331,16 @@ async function getBrowser() {
   return p;
 }
 
-async function fetchWithBrowser(url) {
+// ONE page at a time: on 0.1 CPU a second concurrent Chrome page starves the
+// whole process — /health included (field outage #2, Sep 3). Excess requests
+// wait their turn; the app's 90s window absorbs a short queue.
+let browserQueue = Promise.resolve();
+function fetchWithBrowser(url) {
+  const run = browserQueue.then(() => fetchWithBrowserNow(url));
+  browserQueue = run.catch(() => {});
+  return run;
+}
+async function fetchWithBrowserNow(url) {
   const browser = await getBrowser();
   const page = await browser.newPage();
   try {
@@ -353,9 +485,15 @@ app.get("/recipe", async (req, res) => {
   const url = req.query.url;
   try {
     const u = await assertPublicUrl(url);
-    const raw = /(^|\.)tiktok\.com$/i.test(u.hostname)
-      ? await fetchTikTok(u.href)
-      : await fetchWithBrowser(u.href);
+    let raw;
+    if (/(^|\.)tiktok\.com$/i.test(u.hostname)) raw = await fetchTikTok(u.href);
+    else {
+      // light first (fast, no Chrome). Only a private/invalid address is final
+      // here; any other light failure (404, 403 bot-wall, timeout, no JSON-LD)
+      // falls through to the browser rung, which renders like a real phone.
+      try { raw = await fetchLight(u); } catch (e) { if (e && e.code === "badurl") throw e; raw = null; }
+      if (!raw) raw = await fetchWithBrowser(u.href);
+    }
     const r = sanitizeResult(raw);
     if (r.kind === "blocked")
       return fail(res, 422, "blocked", "This post is private or behind a login — paste the recipe text instead.");
@@ -385,4 +523,5 @@ app.get("/recipe", async (req, res) => {
 if (require.main === module) {
   app.listen(PORT, () => console.log("Sue Chef recipe server on :" + PORT));
 }
-module.exports = { app, isPrivateIp, originAllowed, hostVerdict, assertPublicUrl, sanitizeResult, resolveChrome };
+module.exports = { app, isPrivateIp, originAllowed, hostVerdict, assertPublicUrl, sanitizeResult, resolveChrome,
+  decodeEntities, metaFromHtml, jsonLdRecipeFromHtml, fetchLight };

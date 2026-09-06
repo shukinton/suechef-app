@@ -47,6 +47,14 @@ const path = require('path');
     if (hasTimer) {
       timerSteps++;
       if (timerSteps === 1) {
+        // rev-11: a running timer can be canceled, then started again
+        await page.click('#ck-timer-start');
+        await page.waitForTimeout(150);
+        t('cancel btn shows', await page.$eval('#ck-timer-cancel', el => !el.hidden));
+        await page.click('#ck-timer-cancel');
+        await page.waitForTimeout(150);
+        t('cancel kills timer', await page.evaluate(() =>
+          document.getElementById('ck-pill').hidden && !document.getElementById('ck-timer-start').hidden));
         await page.click('#ck-timer-start');
         firstDeadline = await page.evaluate(() => SC.__cookDeadline === undefined ? null : SC.__cookDeadline);
       } else if (timerSteps === 2) {
@@ -60,10 +68,13 @@ const path = require('path');
           time: document.getElementById('ck-timer-time').textContent
         }));
         const s0 = await state();
+        // rev-11: a not-running timer shows its DURATION, not a frozen countdown
+        t('idle timer shows duration', /min$/.test(s0.time), s0.time);
         await page.click('#ck-timer-start');
         await page.waitForTimeout(250);
         const s1 = await state();
         t('timer replace asks first', s0.pillShown && s1.pillShown && s1.startShown, JSON.stringify({ s0, s1 }));
+        t('ask is visible on the button', /replace/i.test(await page.textContent('#ck-timer-start')));
         await page.click('#ck-timer-start'); // confirm within 8s
         await page.waitForTimeout(900);
         const s2 = await state();
@@ -138,15 +149,42 @@ const path = require('path');
   t('re-add is stable', /Already on your list/.test(await page.textContent('#toast')),
     await page.textContent('#toast'));
 
-  // ---- 4) diet chips pressed state + suppressed wording ----
+  // ---- 4) diet chips: pressed state, and a second press WITHDRAWS (rev-11) ----
   await cookTo('btn-sample-baking');
   await page.click('#rv-diet-chips button:has-text("Vegan")');
   await page.waitForTimeout(150);
   t('diet chip pressed', await page.$eval('#rv-diet-chips button[aria-pressed="true"]', el => /Vegan/.test(el.textContent)).catch(() => false));
+  const proposedBefore = await page.evaluate(() => document.querySelectorAll('#rv-swaps .swap-row').length);
   await page.click('#rv-diet-chips button:has-text("Vegan")');
   await page.waitForTimeout(150);
-  t('suppressed toast honest', /already have swaps|nothing to swap/i.test(await page.textContent('#toast')),
-    await page.textContent('#toast'));
+  t('unpress withdraws', /withdrawn|unmarked/i.test(await page.textContent('#toast')), await page.textContent('#toast'));
+  t('chip unpressed', await page.$eval('#rv-diet-chips button[aria-pressed="true"]', () => true).catch(() => 'none') === 'none');
+  t('proposals gone', proposedBefore > 0 &&
+    await page.evaluate(() => document.querySelectorAll('#rv-swaps .swap-row').length) === 0);
+
+  // ---- 4b) free-text "replace the butter" routes to a row proposal (rev-11) ----
+  await page.fill('#rv-request-input', 'replace the butter');
+  await page.click('#rv-request-go');
+  await page.waitForTimeout(150);
+  t('replace-X proposes', await page.evaluate(() =>
+    [...document.querySelectorAll('#rv-swaps .swap-row')].some(r => /butter/i.test(r.textContent))));
+
+  // ---- 4c) rename on Review syncs the cookbook (rev-11) ----
+  await page.click('#rv-save');
+  await page.click('#rv-rename');
+  await page.fill('#rv-name-input', 'Grandma Cookies');
+  await page.click('#rv-name-save');
+  t('rename shows', await page.textContent('#rv-name') === 'Grandma Cookies');
+  t('rename syncs cookbook', await page.evaluate(() =>
+    SC.store.get('cookbook', []).some(r => r.name === 'Grandma Cookies')));
+
+  // ---- 4d) paste box clear button (rev-11) ----
+  await page.click('#nav button[data-nav="home"]');
+  await page.fill('#paste-input', 'something old');
+  t('clear btn appears', await page.$eval('#paste-clear', el => !el.hidden));
+  await page.click('#paste-clear');
+  t('clear empties box', await page.$eval('#paste-input', el => el.value) === '' &&
+    await page.$eval('#paste-clear', el => el.hidden));
 
   // ---- 5) dark-mode screenshots ----
   await page.emulateMedia({ colorScheme: 'dark' });

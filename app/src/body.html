@@ -11,9 +11,12 @@
         Paste a recipe and I'll walk you through it, hands-free.
       </p>
 
-      <textarea id="paste-input" class="paste-box" rows="6"
-        placeholder="Paste your recipe text — or an Instagram / TikTok / website link.&#10;&#10;(First link after a quiet spell can take up to a minute — the kitchen wakes up.)"
-        aria-label="Paste a recipe link or text"></textarea>
+      <div class="paste-wrap">
+        <textarea id="paste-input" class="paste-box" rows="6"
+          placeholder="Paste your recipe text — or an Instagram / TikTok / website link.&#10;&#10;(First link after a quiet spell can take up to a minute — the kitchen wakes up.)"
+          aria-label="Paste a recipe link or text"></textarea>
+        <button type="button" class="paste-clear" id="paste-clear" hidden aria-label="Clear and paste a new recipe">✕</button>
+      </div>
 
       <div class="row spread">
         <div class="pill-toggle" role="group" aria-label="Units" data-units-toggle>
@@ -38,7 +41,14 @@
     <div class="stack">
       <div class="recipe-head">
         <span class="eyebrow">Review &amp; fine-tune</span>
-        <h2 id="rv-name">Recipe</h2>
+        <div class="name-row">
+          <h2 id="rv-name">Recipe</h2>
+          <button type="button" class="name-edit" id="rv-rename" aria-label="Rename this recipe">✎</button>
+        </div>
+        <div class="name-edit-row" id="rv-name-edit" hidden>
+          <input id="rv-name-input" maxlength="80" aria-label="Recipe name">
+          <button type="button" class="btn btn-secondary" id="rv-name-save">Save</button>
+        </div>
         <div class="recipe-meta">
           <span id="rv-times"></span>
           <span id="rv-source"></span>
@@ -123,6 +133,7 @@
         <div class="timer-time" id="ck-timer-time">00:00</div>
         <div class="timer-actions">
           <button type="button" class="btn btn-ghost" id="ck-timer-start">Start timer</button>
+          <button type="button" class="btn btn-ghost" id="ck-timer-cancel" hidden>Cancel timer</button>
           <button type="button" class="btn btn-ghost" id="ck-timer-stop" hidden>Stop alarm</button>
         </div>
       </div>

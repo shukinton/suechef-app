@@ -75,5 +75,37 @@ t('headerless heuristic', heur.ingredients.length === 2 && heur.steps.length ===
 const sub = SC.parser.parse('Cake\nIngredients\nFor the sauce:\n1 cup cream\nSteps\nWhip.');
 t('sub-header still skipped', sub.ingredients.length === 1 && sub.ingredients[0].name === 'cream', sub.ingredients);
 
+// ---- 5) Instagram-caption hygiene (tester, Sep 4): hype lines are not steps
+const CAP = [
+  'You have got to try this! 🔥', 'Crispy Honey Salmon', 'So easy!!',
+  '2 salmon filets', '1 tbsp honey', 'juice of 1 lemon',
+  'Season the salmon and air fry at 400 degrees Fahrenheit for 12 minutes. #airfryer #salmon',
+  'Drizzle the honey and serve.', 'Follow for more recipes!', 'Save this for later 👇',
+  'Tag a friend who needs this', '#easyrecipes #dinner #yum', 'Enjoy!'
+].join('\n');
+const cap = SC.parser.parse(CAP);
+t('cap: title skips hype', cap.name === 'Crispy Honey Salmon', cap.name);
+t('cap: 3 ingredients', cap.ingredients.length === 3, cap.ingredients.map(i => i.name));
+t('cap: only real steps', cap.steps.length === 2, cap.steps.map(s => s.text));
+t('cap: no hype in steps', !cap.steps.some(s => /try this|follow|save this|tag a|enjoy/i.test(s.text)));
+t('cap: trailing hashtags stripped', !/#/.test(cap.steps[0].text), cap.steps[0].text);
+t('cap: real "try" instruction kept',
+  SC.parser.parse('X\nIngredients\n1 egg\nSteps\nTry not to overmix the batter.\nBake.').steps.length === 2);
+
+// ---- 6) temperature follows the unit system (tester, Sep 4)
+const T = SC.units.convertTempsInText;
+t('temp F->C metric', T('Air fry at 400 degrees Fahrenheit for 15 minutes.', 'metric') ===
+  'Air fry at 200°C (400°F) for 15 minutes.', T('Air fry at 400 degrees Fahrenheit for 15 minutes.', 'metric'));
+t('temp F imperial keeps F first', T('Bake at 350°F.', 'imperial') === 'Bake at 350°F (175°C)', T('Bake at 350°F.', 'imperial'));
+t('temp C->F imperial', T('Preheat the oven to 180 C.', 'imperial') === 'Preheat the oven to 350°F (180°C)',
+  T('Preheat the oven to 180 C.', 'imperial'));
+t('temp bare high is F', /200°C \(400°F\)/.test(T('Roast at 400 degrees until golden.', 'metric')),
+  T('Roast at 400 degrees until golden.', 'metric'));
+t('temp bare low is C', /180°C \(350°F\)/.test(T('Bake at 180 degrees.', 'metric')), T('Bake at 180 degrees.', 'metric'));
+t('temp bare ambiguous untouched', T('Warm at 250 degrees.', 'metric') === 'Warm at 250 degrees.');
+t('temp angle untouched', T('Fold the dough at a 45 degree angle.', 'metric') === 'Fold the dough at a 45 degree angle.');
+t('temp rotate untouched', T('Rotate the pan 180 degrees halfway.', 'metric') === 'Rotate the pan 180 degrees halfway.');
+t('temp chart pairs', T('at 425°F', 'metric') === 'at 220°C (425°F)' && T('at 220 C', 'imperial') === 'at 425°F (220°C)');
+
 console.log('PASTE: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
